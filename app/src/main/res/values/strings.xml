@@ -1,0 +1,32 @@
+<resources>
+    <string name="app_name">eiP Manager</string>
+    
+    <!-- Device Card -->
+    <string name="status_label">Status: %1$s</string>
+    <string name="btn_connect">Connect</string>
+    <string name="copyright">© 2024 eiP Technology</string>
+
+    <!-- Settings Sections -->
+    <string name="section_button_sleep">Button &amp; Sleep Config</string>
+    <string name="section_advanced">Advanced Adjustment</string>
+    <string name="section_usi_mode">Tail Button USI Mode</string>
+
+    <!-- Button Labels -->
+    <string name="key_top_single">Top Button: Single Click</string>
+    <string name="key_top_double">Top Button: Double Click</string>
+    <string name="key_top_triple">Top Button: Triple Click</string>
+    <string name="key_bottom_single">Bottom Button: Single Click</string>
+    <string name="key_bottom_double">Bottom Button: Double Click</string>
+    <string name="key_bottom_triple">Bottom Button: Triple Click</string>
+
+    <!-- Specific Settings -->
+    <string name="label_sleep_timer">Auto Sleep Timer</string>
+    <string name="label_signal_strength">Signal Strength</string>
+    <string name="btn_factory_reset">Factory Reset Settings</string>
+    
+    <!-- Units & Status -->
+    <string name="unit_level">Level %1$d</string>
+    <string name="unit_mins">%1$d mins</string>
+    <string name="status_unknown">Unknown</string>
+    <string name="log_title">Communication Log</string>
+</resources>
