@@ -1,6 +1,7 @@
 package com.example.eip.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
@@ -58,10 +59,46 @@ val Text_LightGray = Color(0xFFAEAEB2)
 
 enum class DetailPanel { NONE, ERASER, MAPPING, SIGNAL, SETTINGS }
 
+// 第一次連上筆時顯示的教學導覽。圖片檔名對應 res/drawable 下的 tutorial_*，
+// 文案(title / subtitle)直接改這裡的字串。
+private val tutorialPages = listOf(
+    TutorialPage(
+        "tutorial_1_master",
+        "Master Your Stylus",
+        "Configure your button shortcuts and customize your pen for your workflow."
+    ),
+    TutorialPage(
+        "tutorial_2_nib",
+        "Fine-Tune Nib Sensitivity",
+        "Calibrate signal strength for a smooth, pixel-perfect writing experience."
+    ),
+    TutorialPage(
+        "tutorial_3_eraser",
+        "Eraser Sensor Control",
+        "Customize your eraser sensor for effortless switching between writing and erasing."
+    ),
+    TutorialPage(
+        "tutorial_4_sleep",
+        "Smart Auto-Sleep",
+        "Set your idle time to conserve battery when the pen is not in use."
+    ),
+    TutorialPage(
+        "tutorial_5_ataglance",
+        "At-a-Glance Status",
+        "Instantly check your active button mappings and current settings in one view."
+    )
+)
+
 @Composable
 fun DebugScreen(viewModel: BluetoothViewModel) {
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
     val activeDevice = discoveredDevices.firstOrNull { it.connectionState == DeviceConnectionState.READY }
+    val context = LocalContext.current
+    var showTutorial by rememberSaveable { mutableStateOf(false) }
+    // 第一次成功連上筆(且沒看過教學)時，跳出彈窗教學
+    LaunchedEffect(activeDevice?.id) {
+        if (activeDevice != null && !hasSeenTutorial(context)) showTutorial = true
+    }
     var activePanel by remember { mutableStateOf(DetailPanel.NONE) }
     var targetKeyCode by remember { mutableStateOf(BleProtocol.Pencil.KeyCode.TOP_SINGLE) }
     
@@ -126,6 +163,7 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
                             viewModel = viewModel,
                             debugClickCount = debugClickCount,
                             onDebugClick = { debugClickCount++ },
+                            onShowTutorial = { showTutorial = true },
                             onDismiss = { activePanel = DetailPanel.NONE }
                         )
                     }
@@ -136,17 +174,66 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
                 TopHeader(activeDevice, viewModel)
             }
         }
+
+        // 彈窗式教學（疊在最上層）
+        if (showTutorial) {
+            TutorialOverlay(tutorialPages) {
+                markTutorialSeen(context)
+                showTutorial = false
+            }
+        }
     }
 }
 
 @Composable
 fun TopHeader(device: BleDevice, viewModel: BluetoothViewModel) {
     val batteryLevel by viewModel.batteryLevel.collectAsState()
+    val devices by viewModel.discoveredDevices.collectAsState()
+    var menuOpen by remember { mutableStateOf(false) }
     val isReady = device.connectionState == DeviceConnectionState.READY
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("USI 2.0 Ultra", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
-            Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 2.dp).size(16.dp))
+        Box {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { menuOpen = true }
+            ) {
+                Text("USI 2.0 Ultra", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
+                Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 2.dp).size(16.dp))
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                devices.forEach { d ->
+                    val isActive = d.id == device.id
+                    val selectable = isActive || d.isNearby
+                    DropdownMenuItem(
+                        enabled = selectable,
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(min = 180.dp)) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(d.name, fontSize = 14.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, color = if (selectable) Text_Black else Text_LightGray)
+                                    Text(
+                                        when {
+                                            isActive -> "Connected"
+                                            d.connectionState == DeviceConnectionState.CONNECTING -> "Connecting…"
+                                            !d.isNearby -> "Offline"
+                                            else -> "Tap to switch"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = if (isActive) Color(0xFF34C759) else Text_LightGray
+                                    )
+                                }
+                                if (isActive) Icon(Icons.Default.Check, null, tint = EiP_Orange, modifier = Modifier.padding(start = 8.dp).size(18.dp))
+                            }
+                        },
+                        onClick = {
+                            menuOpen = false
+                            if (!isActive) viewModel.switchTo(d)
+                        }
+                    )
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -275,6 +362,7 @@ fun DetailPanelContent(
     viewModel: BluetoothViewModel,
     debugClickCount: Int,
     onDebugClick: () -> Unit,
+    onShowTutorial: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val usiSettings by viewModel.usiSettings.collectAsState()
@@ -309,6 +397,28 @@ fun DetailPanelContent(
             DetailPanel.SETTINGS -> {
                 Text("Device Settings", fontSize = 13.sp, color = Text_LightGray); Spacer(modifier = Modifier.height(8.dp))
                 DetailItemCard { Text("Auto Sleep Timer", fontWeight = FontWeight.Bold, fontSize = 15.sp); Slider(value = shutdownTime.toFloat(), onValueChange = { viewModel.setSmartShutdownTime(it.roundToInt()) }, valueRange = 1f..15f, colors = SliderDefaults.colors(thumbColor = EiP_Orange, activeTrackColor = EiP_Orange)); Text("$shutdownTime minutes", modifier = Modifier.align(Alignment.End), fontSize = 12.sp, color = Text_LightGray) }
+                Spacer(modifier = Modifier.height(32.dp)); Text("Support & Guides", fontSize = 13.sp, color = Text_LightGray); Spacer(modifier = Modifier.height(8.dp))
+                DetailItemCard(onClick = { onShowTutorial() }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Tutorial", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Text_LightGray)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                DetailItemCard(onClick = {
+                    try {
+                        val mail = Intent(Intent.ACTION_SENDTO).apply {
+                            data = Uri.parse("mailto:service-us@lemeng.com.tw")
+                            putExtra(Intent.EXTRA_SUBJECT, "eiP Manager Support")
+                        }
+                        context.startActivity(mail)
+                    } catch (e: Exception) { /* 沒有郵件 App 時忽略 */ }
+                }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Help & Support", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.KeyboardArrowRight, null, tint = Text_LightGray)
+                    }
+                }
                 Spacer(modifier = Modifier.height(32.dp)); Text("Maintenance", fontSize = 13.sp, color = Text_LightGray); Spacer(modifier = Modifier.height(8.dp))
                 DetailItemCard { 
                     Row(verticalAlignment = Alignment.CenterVertically) { 
