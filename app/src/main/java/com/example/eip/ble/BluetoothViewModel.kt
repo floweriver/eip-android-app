@@ -58,6 +58,12 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var hasReceivedInitialStatus = false
 
+    // 手動切換時暫停 auto-connect，避免 loop 搶著把舊筆連回去
+    @Volatile private var manualSwitching = false
+    private var pendingSwitchTarget: BleDevice? = null
+    // 使用者最後選定的裝置，auto-connect 會優先連它
+    private var preferredDeviceId: String? = null
+
     init {
         startAutoConnectLoop()
         startScanning()
@@ -114,20 +120,22 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             delay(1000)
             while (true) {
                 try {
-                    if (bluetoothAdapter?.isEnabled == true) {
+                    if (!manualSwitching && bluetoothAdapter?.isEnabled == true) {
                         loadConnectedDevices()
-                        
+
                         val currentDevices = _discoveredDevices.value
                         val activeDevice = currentDevices.firstOrNull {
                             it.connectionState == DeviceConnectionState.READY ||
                             it.connectionState == DeviceConnectionState.CONNECTING ||
-                            it.connectionState == DeviceConnectionState.CONNECTED
+                            it.connectionState == DeviceConnectionState.CONNECTED ||
+                            it.connectionState == DeviceConnectionState.DISCOVERING_SERVICES
                         }
 
                         if (activeDevice == null) {
-                            val target = currentDevices.firstOrNull { 
-                                it.connectionState == DeviceConnectionState.DISCONNECTED && it.isNearby 
+                            val candidates = currentDevices.filter {
+                                it.connectionState == DeviceConnectionState.DISCONNECTED && it.isNearby
                             }
+                            val target = candidates.firstOrNull { it.id == preferredDeviceId } ?: candidates.firstOrNull()
                             if (target != null) {
                                 connect(target)
                             }
@@ -143,6 +151,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt !== bluetoothGatt) { try { gatt.close() } catch (_: Exception) {}; return }
             val deviceAddress = gatt.device.address
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -164,6 +173,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt !== bluetoothGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 updateDeviceConnectionState(gatt.device.address, DeviceConnectionState.READY)
                 toggleNotifications(BleProtocol.Pencil.SERVICE_UUID.toString(), BleProtocol.Pencil.NOTIFY_CHAR_UUID.toString(), true)
@@ -172,6 +182,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            if (gatt !== bluetoothGatt) return
             processReceivedData(value)
         }
     }
@@ -350,8 +361,41 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun connect(device: BleDevice) {
         if (bluetoothGatt != null) return
+        preferredDeviceId = device.id
         updateDeviceConnectionState(device.id, DeviceConnectionState.CONNECTING, true)
         bluetoothGatt = device.peripheral?.connectGatt(getApplication(), false, gattCallback)
+    }
+
+    /**
+     * 手動切換到另一隻筆：先斷開目前連線，等 BLE 協定堆疊沉澱後再連新的。
+     * 這類筆一次只能維持一條 GATT，所以切換 = 斷 A → 連 B。
+     */
+    fun switchTo(target: BleDevice) {
+        val current = _discoveredDevices.value.firstOrNull {
+            it.connectionState != DeviceConnectionState.DISCONNECTED
+        }
+        if (current?.id == target.id) return                       // 已經是這隻
+        if (target.peripheral == null || !target.isNearby) return  // 離線無法連
+        preferredDeviceId = target.id
+
+        if (bluetoothGatt == null && current == null) {
+            connect(target)
+            return
+        }
+
+        pendingSwitchTarget = target
+        manualSwitching = true
+        addLog("Switching to ${target.name}", LogType.INFO)
+        viewModelScope.launch {
+            closeGatt()
+            current?.let { updateDeviceConnectionState(it.id, DeviceConnectionState.DISCONNECTED) }
+            resetState()
+            delay(600)
+            val next = pendingSwitchTarget
+            pendingSwitchTarget = null
+            manualSwitching = false
+            if (next != null) connect(next)
+        }
     }
 
     fun disconnect() { closeGatt() }

@@ -142,11 +142,52 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
 @Composable
 fun TopHeader(device: BleDevice, viewModel: BluetoothViewModel) {
     val batteryLevel by viewModel.batteryLevel.collectAsState()
+    val devices by viewModel.discoveredDevices.collectAsState()
+    var menuOpen by remember { mutableStateOf(false) }
     val isReady = device.connectionState == DeviceConnectionState.READY
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("USI 2.0 Ultra", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
-            Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 2.dp).size(16.dp))
+        Box {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { menuOpen = true }
+            ) {
+                Text("USI 2.0 Ultra", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
+                Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 2.dp).size(16.dp))
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                devices.forEach { d ->
+                    val isActive = d.id == device.id
+                    val selectable = isActive || d.isNearby
+                    DropdownMenuItem(
+                        enabled = selectable,
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(min = 180.dp)) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(d.name, fontSize = 14.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, color = if (selectable) Text_Black else Text_LightGray)
+                                    Text(
+                                        when {
+                                            isActive -> "Connected"
+                                            d.connectionState == DeviceConnectionState.CONNECTING -> "Connecting…"
+                                            !d.isNearby -> "Offline"
+                                            else -> "Tap to switch"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = if (isActive) Color(0xFF34C759) else Text_LightGray
+                                    )
+                                }
+                                if (isActive) Icon(Icons.Default.Check, null, tint = EiP_Orange, modifier = Modifier.padding(start = 8.dp).size(18.dp))
+                            }
+                        },
+                        onClick = {
+                            menuOpen = false
+                            if (!isActive) viewModel.switchTo(d)
+                        }
+                    )
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
