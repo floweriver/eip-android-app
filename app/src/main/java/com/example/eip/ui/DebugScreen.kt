@@ -477,6 +477,14 @@ fun DeviceScannerOverlay(devices: List<BleDevice>, viewModel: BluetoothViewModel
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.bluetoothlogo),
+            contentDescription = null,
+            modifier = Modifier.size(80.dp)
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
         Text(
             text = if (isEmpty) "Pair your eiP Pencil" else "Connect your eiP Pencil",
             fontSize = 22.sp,
