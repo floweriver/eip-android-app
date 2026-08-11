@@ -72,14 +72,21 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
-            val name = try { device.name } catch (e: SecurityException) { null } ?: return
-            
-            if (name.contains("eip", ignoreCase = true)) {
-                _discoveredDevices.update { list ->
-                    list.map { 
-                        if (it.id == device.address) it.copy(isNearby = true) 
-                        else it 
+            val addr = device.address
+            // 掃描結果的名稱可能為 null（名稱未帶在廣播封包裡），改用多來源取名
+            val name = (try { device.name } catch (e: SecurityException) { null }) ?: result.scanRecord?.deviceName
+
+            _discoveredDevices.update { list ->
+                when {
+                    // 已在清單中（多半是已配對的 eip 筆）：掃到就代表在附近
+                    list.any { it.id == addr } ->
+                        list.map { if (it.id == addr) it.copy(isNearby = true) else it }
+                    // 掃到名稱且是 eip 筆：新增（涵蓋尚未配對的筆，ChromeOS 常見）
+                    name != null && name.contains("eip", ignoreCase = true) && !name.contains("magnetix", ignoreCase = true) -> {
+                        addLog("Discovered $name ($addr)", LogType.INFO)
+                        list + BleDevice(peripheral = device, name = name, rssi = result.rssi, isNearby = true)
                     }
+                    else -> list
                 }
             }
         }
@@ -342,18 +349,40 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             val bonded = bluetoothAdapter!!.bondedDevices
             val connectedToSystem = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
-            
-            val filtered = bonded.filter { d ->
-                val name = try { d.name } catch (e: SecurityException) { null } ?: ""
-                name.contains("eip", ignoreCase = true) && !name.contains("magnetix", ignoreCase = true)
-            }.map { d ->
-                val existing = _discoveredDevices.value.find { it.id == d.address }
-                val isSystemConnected = connectedToSystem.any { it.address == d.address }
-                val nearby = isSystemConnected || (existing?.isNearby ?: false)
-                
-                existing?.copy(isNearby = nearby) ?: BleDevice(peripheral = d, name = d.name ?: "eiP Device", rssi = -1, isNearby = nearby)
+
+            fun isPencil(name: String?): Boolean {
+                val n = name ?: return false
+                return n.contains("eip", ignoreCase = true) && !n.contains("magnetix", ignoreCase = true)
             }
-            _discoveredDevices.value = filtered
+
+            val existingList = _discoveredDevices.value
+            // 用 address 當 key 合併，保留插入順序
+            val result = LinkedHashMap<String, BleDevice>()
+
+            // 1. 已配對的 eip 筆 → 直接視為可連線。
+            //    ChromeOS 上筆常已連線但「不再廣播」，掃描與 getConnectedDevices(GATT) 都偵測不到，
+            //    因此不能依賴這兩個來源；已配對代表使用者綁定過，直接允許連線，連不上再回到 DISCONNECTED。
+            bonded.filter { isPencil(try { it.name } catch (e: SecurityException) { null }) }.forEach { d ->
+                val existing = existingList.find { it.id == d.address }
+                result[d.address] = existing?.copy(isNearby = true)
+                    ?: BleDevice(peripheral = d, name = d.name ?: "eiP Device", rssi = -1, isNearby = true)
+            }
+
+            // 2. 系統已連線但「未配對」的 eip 筆（ChromeOS 常見：連線但不 bond）
+            connectedToSystem.filter { isPencil(try { it.name } catch (e: SecurityException) { null }) }.forEach { d ->
+                if (!result.containsKey(d.address)) {
+                    val existing = existingList.find { it.id == d.address }
+                    result[d.address] = existing?.copy(isNearby = true)
+                        ?: BleDevice(peripheral = d, name = d.name ?: "eiP Device", rssi = -1, isNearby = true)
+                }
+            }
+
+            // 3. 保留掃描發現、既未配對也未被系統列為已連線的 eip 筆
+            existingList.forEach { dev ->
+                if (!result.containsKey(dev.id)) result[dev.id] = dev
+            }
+
+            _discoveredDevices.value = result.values.toList()
         } catch (e: Exception) {
             Log.e("BleDebug", "Load Bonded Fail: ${e.message}")
         }
