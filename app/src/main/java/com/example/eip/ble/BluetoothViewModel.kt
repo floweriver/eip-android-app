@@ -31,6 +31,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     private val bluetoothAdapter: BluetoothAdapter? by lazy { bluetoothManager.adapter }
     private var bluetoothGatt: BluetoothGatt? = null
     private var scanJob: Job? = null
+    // 連線逾時看門狗：連線卡在 CONNECTING 太久時強制釋放，避免 auto-connect 死鎖
+    private var connectTimeoutJob: Job? = null
 
     private val _discoveredDevices = MutableStateFlow<List<BleDevice>>(emptyList())
     val discoveredDevices = _discoveredDevices.asStateFlow()
@@ -182,6 +184,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (gatt !== bluetoothGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                connectTimeoutJob?.cancel()   // 連線成功，取消逾時看門狗
                 updateDeviceConnectionState(gatt.device.address, DeviceConnectionState.READY)
                 toggleNotifications(BleProtocol.Pencil.SERVICE_UUID.toString(), BleProtocol.Pencil.NOTIFY_CHAR_UUID.toString(), true)
                 queryInitialStatus()
@@ -240,6 +243,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun closeGatt() {
+        connectTimeoutJob?.cancel()
         try {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -393,6 +397,23 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         preferredDeviceId = device.id
         updateDeviceConnectionState(device.id, DeviceConnectionState.CONNECTING, true)
         bluetoothGatt = device.peripheral?.connectGatt(getApplication(), false, gattCallback)
+        startConnectTimeout(device.id)
+    }
+
+    // 連線 12 秒內若未進入 READY，視為失敗：釋放 GATT 並回到 DISCONNECTED，讓 auto-connect 下一輪重試。
+    // 這可打破「連線卡在 CONNECTING → auto-connect 以為還在連 → 永不重試」的死鎖。
+    private fun startConnectTimeout(address: String) {
+        connectTimeoutJob?.cancel()
+        connectTimeoutJob = viewModelScope.launch {
+            delay(12000)
+            val dev = _discoveredDevices.value.find { it.id == address }
+            if (dev != null && dev.connectionState != DeviceConnectionState.READY) {
+                addLog("Connect timeout, retrying: $address", LogType.ERROR)
+                closeGatt()
+                updateDeviceConnectionState(address, DeviceConnectionState.DISCONNECTED)
+                resetState()
+            }
+        }
     }
 
     /**
@@ -428,6 +449,13 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun disconnect() { closeGatt() }
+
+    override fun onCleared() {
+        super.onCleared()
+        // ViewModel 被銷毀（Activity finish）時務必關閉 GATT，
+        // 否則連線洩漏會讓筆一直被舊連線佔住，下次開 App 連不上。
+        closeGatt()
+    }
     fun clearLogs() { _communicationLog.value = emptyList() }
     fun addLog(message: String, type: LogType) { viewModelScope.launch { _communicationLog.update { (it + LogMessage(message, type)).takeLast(100) } } }
     
