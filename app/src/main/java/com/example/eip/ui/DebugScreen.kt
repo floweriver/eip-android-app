@@ -1,7 +1,15 @@
+// v1.1.0 | 2026-08-31 | Debug Logs 新增一鍵複製（含裝置與版本資訊表頭）
+//
+// changelog:
+//   v1.1.0 | 2026-08-31 | Debug Logs 加 Copy 按鈕；複製內容前置 App 版本、
+//                         裝置型號、Android 版本、韌體版本，方便回報時直接貼上。
+//   v1.0.0 | —          | 初版（進版控前）
 package com.example.eip.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.widget.Toast
 import android.provider.Settings
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
@@ -30,9 +38,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -373,6 +383,7 @@ fun DetailPanelContent(
     val communicationLog by viewModel.communicationLog.collectAsState()
     val context = LocalContext.current
     val appVersion = remember { try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.4" } catch (e: Exception) { "1.0.4" } }
+    val clipboard = LocalClipboardManager.current
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -441,7 +452,25 @@ fun DetailPanelContent(
                 
                 // 只有點擊 6 次後才會顯示 Debug Logs
                 if (debugClickCount >= 6) {
-                    Spacer(modifier = Modifier.height(24.dp)); Row(verticalAlignment = Alignment.CenterVertically) { Text("Debug Logs", fontSize = 13.sp, color = Text_LightGray, modifier = Modifier.weight(1f)); TextButton(onClick = { viewModel.clearLogs() }) { Text("Clear", fontSize = 12.sp, color = EiP_Orange) } }
+                    Spacer(modifier = Modifier.height(24.dp)); Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Debug Logs", fontSize = 13.sp, color = Text_LightGray, modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            // 複製時前置環境資訊：回報時最需要知道的就是哪台裝置、哪個 Android 版本
+                            val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                            val header = buildString {
+                                appendLine("eiP Manager $appVersion | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                                appendLine("Firmware: $firmwareVersion | ${communicationLog.size} entries")
+                                append("----------------------------------------")
+                            }
+                            val body = communicationLog.joinToString("\n") { "[${fmt.format(Date(it.timestamp))}] ${it.message}" }
+                            clipboard.setText(AnnotatedString(header + "\n" + body))
+                            // Android 13+ 系統自己會顯示複製確認，再跳 Toast 會重複
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                                Toast.makeText(context, "Copied ${communicationLog.size} entries", Toast.LENGTH_SHORT).show()
+                            }
+                        }) { Text("Copy", fontSize = 12.sp, color = EiP_Orange) }
+                        TextButton(onClick = { viewModel.clearLogs() }) { Text("Clear", fontSize = 12.sp, color = EiP_Orange) }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(modifier = Modifier.fillMaxWidth().weight(1f), color = Color(0xFF1C1C1E), shape = RoundedCornerShape(8.dp)) {
                         val listState = rememberLazyListState()

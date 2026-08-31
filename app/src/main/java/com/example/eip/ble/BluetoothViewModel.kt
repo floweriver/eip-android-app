@@ -1,3 +1,15 @@
+// v1.2.1 | 2026-08-31 | 修正 API 33 以下收不到任何 BLE 通知（缺兩參數回呼）
+//
+// changelog:
+//   v1.2.1 | 2026-08-31 | 補上兩參數版 onCharacteristicChanged。三參數版是 API 33
+//                         才新增的，只覆寫它會讓 API 24-32 的裝置（Fire 平板、
+//                         舊 Android 平板）收到的每一則通知都被靜默丟棄。
+//   v1.2.0 | 2026-08-31 | T-08 診斷用：記錄權限、藍牙開關、掃描被擋下的原因。
+//                         原本這些失敗路徑全是靜默的，權限沒給和「真的找不到筆」
+//                         在畫面上長得一模一樣。純新增 addLog，行為未變更。
+//   v1.1.0 | 2026-08-31 | T-07 診斷用：記錄服務探索實際結果、送出方向、寫入回傳值、
+//                         以及所有原本靜默的失敗路徑。純新增 addLog，行為未變更。
+//   v1.0.0 | —          | 初版
 package com.example.eip.ble
 
 import android.Manifest
@@ -60,6 +72,9 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var hasReceivedInitialStatus = false
 
+    // 只記錄一次：確認舊版通知路徑真的有被呼叫到（驗證 v1.2.1 修正用）
+    private var loggedLegacyNotifyPath = false
+
     // 手動切換時暫停 auto-connect，避免 loop 搶著把舊筆連回去
     @Volatile private var manualSwitching = false
     private var pendingSwitchTarget: BleDevice? = null
@@ -99,9 +114,22 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         scanJob = viewModelScope.launch {
             while (true) {
                 try {
+                    // 診斷 (T-08)：掃描迴圈是唯一無條件持續運轉的地方，
+                    // 所以環境狀態記錄放這裡；藍牙關閉時 auto-connect 迴圈不會跑。
+                    logEnvironmentIfChanged()
+
                     val adapter = bluetoothAdapter
-                    if (adapter != null && adapter.isEnabled && canScan()) {
-                        val scanner = adapter.bluetoothLeScanner
+                    val blockReason = when {
+                        adapter == null -> "no Bluetooth adapter on this device"
+                        !adapter.isEnabled -> "Bluetooth adapter is off"
+                        !canScan() -> "${scanPermissionName()} not granted"
+                        adapter.bluetoothLeScanner == null -> "bluetoothLeScanner unavailable"
+                        else -> null
+                    }
+                    logScanBlockIfChanged(blockReason)
+
+                    if (blockReason == null) {
+                        val scanner = adapter?.bluetoothLeScanner
                         if (scanner != null) {
                             scanner.startScan(scanCallback)
                             delay(4000)
@@ -110,6 +138,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 } catch (e: Exception) {
                     Log.e("BleDebug", "Scan Error: ${e.message}")
+                    addLog("X SCAN ERROR - ${e.message}", LogType.ERROR)
                 }
                 delay(3000)
             }
@@ -183,16 +212,55 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (gatt !== bluetoothGatt) return
+
+            // --- 診斷日誌 (T-07)：確認服務探索到底拿到了什麼 ---
+            // 目前 READY 是在「確認 ffe0 存在」之前就設定的，所以服務沒解析出來時
+            // 畫面照樣顯示連線正常，而每個指令都會被靜默丟棄。這幾行讓它現形。
+            val services = gatt.services ?: emptyList()
+            addLog("Services discovered: status=$status count=${services.size}", LogType.INFO)
+            addLog("  UUIDs: " + (if (services.isEmpty()) "(none)" else services.joinToString(", ") { svc ->
+                val u = svc.uuid.toString()
+                if (u.endsWith("-0000-1000-8000-00805f9b34fb")) u.substring(4, 8) else u
+            }), LogType.INFO)
+            val pencilSvc = gatt.getService(BleProtocol.Pencil.SERVICE_UUID)
+            if (pencilSvc == null) {
+                addLog("X ffe0 NOT FOUND - every command will be silently dropped", LogType.ERROR)
+            } else {
+                val w = pencilSvc.getCharacteristic(BleProtocol.Pencil.WRITE_CHAR_UUID)
+                val n = pencilSvc.getCharacteristic(BleProtocol.Pencil.NOTIFY_CHAR_UUID)
+                addLog("ffe0 OK - write(ffe2)=${w != null} notify(ffe3)=${n != null}",
+                    if (w != null && n != null) LogType.INFO else LogType.ERROR)
+            }
+            // --- 診斷日誌結束 ---
+
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 connectTimeoutJob?.cancel()   // 連線成功，取消逾時看門狗
                 updateDeviceConnectionState(gatt.device.address, DeviceConnectionState.READY)
                 toggleNotifications(BleProtocol.Pencil.SERVICE_UUID.toString(), BleProtocol.Pencil.NOTIFY_CHAR_UUID.toString(), true)
                 queryInitialStatus()
+            } else {
+                addLog("X Service discovery FAILED: status=$status", LogType.ERROR)
             }
         }
 
+        // API 33+ 走這個
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
             if (gatt !== bluetoothGatt) return
+            processReceivedData(value)
+        }
+
+        // API 33 以下走這個。三參數版本是 API 33 才新增的，框架在舊系統上
+        // 只認得這個兩參數版；不覆寫它，Fire 平板等 API 24-32 裝置收到的
+        // 每一則通知都會被靜默丟棄（送得出去、收不回來）。
+        // 框架依 API 等級只會呼叫其中一個，不會重複處理。
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            if (gatt !== bluetoothGatt) return
+            if (!loggedLegacyNotifyPath) {
+                loggedLegacyNotifyPath = true
+                addLog("Notify via legacy 2-arg callback (API ${Build.VERSION.SDK_INT})", LogType.INFO)
+            }
+            @Suppress("DEPRECATION") val value = characteristic.value ?: return
             processReceivedData(value)
         }
     }
@@ -315,25 +383,62 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun sendCommand(serviceUUID: String, charUUID: String, packet: ByteArray) {
-        val gatt = bluetoothGatt ?: return
-        val characteristic = gatt.getService(UUID.fromString(serviceUUID))?.getCharacteristic(UUID.fromString(charUUID)) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(characteristic, packet, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+        // 診斷日誌 (T-07)：原本三個失敗點都是靜默 return，送出方向完全沒有記錄。
+        // 拆開來逐一記錄，才分得清「沒送出」「送了被拒」「送成功但沒回應」。
+        val hex = packet.joinToString(" ") { "%02X".format(it) }
+        val shortSvc = serviceUUID.substring(4, 8)
+        val shortChar = charUUID.substring(4, 8)
+
+        val gatt = bluetoothGatt
+        if (gatt == null) {
+            addLog("X SEND ABORT - no GATT: $hex", LogType.ERROR)
+            return
+        }
+        val service = gatt.getService(UUID.fromString(serviceUUID))
+        if (service == null) {
+            addLog("X SEND ABORT - service $shortSvc not found: $hex", LogType.ERROR)
+            return
+        }
+        val characteristic = service.getCharacteristic(UUID.fromString(charUUID))
+        if (characteristic == null) {
+            addLog("X SEND ABORT - char $shortChar not found: $hex", LogType.ERROR)
+            return
+        }
+        val result: String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // BluetoothStatusCodes.SUCCESS == 0；用字面值避免在舊版裝置觸發類別解析
+            val rc = gatt.writeCharacteristic(characteristic, packet, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            if (rc == 0) "ok" else "rc=$rc"
         } else {
             @Suppress("DEPRECATION") characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
             @Suppress("DEPRECATION") characteristic.value = packet
-            @Suppress("DEPRECATION") gatt.writeCharacteristic(characteristic)
+            @Suppress("DEPRECATION") val ok = gatt.writeCharacteristic(characteristic)
+            if (ok) "ok" else "rejected"
         }
+        addLog("-> SENT: $hex [$result]", LogType.SENT)
     }
 
     fun toggleNotifications(serviceUUID: String, charUUID: String, enable: Boolean) {
-        val characteristic = bluetoothGatt?.getService(UUID.fromString(serviceUUID))?.getCharacteristic(UUID.fromString(charUUID)) ?: return
-        bluetoothGatt?.setCharacteristicNotification(characteristic, enable)
-        val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-        descriptor?.let {
-            val valBytes = if (enable) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) bluetoothGatt?.writeDescriptor(it, valBytes) else { @Suppress("DEPRECATION") it.value = valBytes; @Suppress("DEPRECATION") bluetoothGatt?.writeDescriptor(it) }
+        // 診斷日誌 (T-07)：CCCD 沒寫成功 = 通知永遠不會來 = 全部顯示 No Function。
+        // 原本兩個失敗點都是靜默跳過。行為不變，只是讓失敗現形。
+        val characteristic = bluetoothGatt?.getService(UUID.fromString(serviceUUID))?.getCharacteristic(UUID.fromString(charUUID))
+        if (characteristic == null) {
+            addLog("X NOTIFY ABORT - ${serviceUUID.substring(4, 8)}/${charUUID.substring(4, 8)} not found", LogType.ERROR)
+            return
         }
+        val setOk = bluetoothGatt?.setCharacteristicNotification(characteristic, enable)
+        val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+        if (descriptor == null) {
+            addLog("X NOTIFY ABORT - CCCD(2902) not found, notifications will never arrive", LogType.ERROR)
+            return
+        }
+        val valBytes = if (enable) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            bluetoothGatt?.writeDescriptor(descriptor, valBytes)
+        } else {
+            @Suppress("DEPRECATION") descriptor.value = valBytes
+            @Suppress("DEPRECATION") bluetoothGatt?.writeDescriptor(descriptor)
+        }
+        addLog("Notify=$enable - setCharNotification=$setOk, CCCD write issued", LogType.INFO)
     }
 
     fun calculateCRC8Maxim(data: ByteArray): Byte {
@@ -347,8 +452,16 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun loadConnectedDevices() {
-        if (bluetoothAdapter == null) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
+        // 診斷 (T-08)：這兩個 return 原本是靜默的，裝置清單為空時看不出原因。
+        if (bluetoothAdapter == null) {
+            logLoadBlockIfChanged("no Bluetooth adapter")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+            logLoadBlockIfChanged("BLUETOOTH_CONNECT not granted")
+            return
+        }
+        logLoadBlockIfChanged(null)
 
         try {
             val bonded = bluetoothAdapter!!.bondedDevices
@@ -393,8 +506,20 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun connect(device: BleDevice) {
-        if (bluetoothGatt != null) return
+        // 診斷日誌 (T-02/T-07)：記錄實際連線目標與 bond 狀態，並讓「因 GATT 忙碌
+        // 而被吞掉的點擊」現形（畫面標題寫死 USI 2.0 Ultra，看不出連到誰）。
+        if (bluetoothGatt != null) {
+            addLog("Connect ignored (GATT busy) -> ${device.name}", LogType.INFO)
+            return
+        }
         preferredDeviceId = device.id
+        val bond = when (device.peripheral?.bondState) {
+            BluetoothDevice.BOND_BONDED -> "bonded"
+            BluetoothDevice.BOND_BONDING -> "bonding"
+            BluetoothDevice.BOND_NONE -> "not bonded"
+            else -> "unknown"
+        }
+        addLog("Connecting -> ${device.name} [${device.id}] ($bond)", LogType.INFO)
         updateDeviceConnectionState(device.id, DeviceConnectionState.CONNECTING, true)
         bluetoothGatt = device.peripheral?.connectGatt(getApplication(), false, gattCallback)
         startConnectTimeout(device.id)
@@ -470,5 +595,55 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+    // --- 診斷 (T-08)：權限與藍牙狀態原本完全沒有記錄。掃描迴圈的三個前置條件
+    //     任一不成立就靜默空轉，使用者只看到「找不到你的筆」，分不出是權限沒給、
+    //     藍牙沒開，還是真的掃不到。以下只在「狀態改變」時記錄，避免每幾秒洗版。---
+    private var lastEnvSummary: String? = null
+    private var lastScanBlockReason: String? = null
+    private var lastLoadBlockReason: String? = null
+
+    private fun permLabel(permission: String): String =
+        if (hasPermission(permission)) "granted" else "DENIED"
+
+    private fun scanPermissionName(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "BLUETOOTH_SCAN" else "ACCESS_FINE_LOCATION"
+
+    private fun logEnvironmentIfChanged() {
+        val api = Build.VERSION.SDK_INT
+        val perms = if (api >= Build.VERSION_CODES.S) {
+            "SCAN=${permLabel(Manifest.permission.BLUETOOTH_SCAN)} " +
+                "CONNECT=${permLabel(Manifest.permission.BLUETOOTH_CONNECT)}"
+        } else {
+            "BLUETOOTH=${permLabel(Manifest.permission.BLUETOOTH)} " +
+                "ADMIN=${permLabel(Manifest.permission.BLUETOOTH_ADMIN)} " +
+                "FINE_LOCATION=${permLabel(Manifest.permission.ACCESS_FINE_LOCATION)}"
+        }
+        val adapter = bluetoothAdapter
+        val adapterState = when {
+            adapter == null -> "ABSENT"
+            adapter.isEnabled -> "enabled"
+            else -> "OFF"
+        }
+        val summary = "Perm: $perms (API $api) | Adapter: $adapterState"
+        if (summary != lastEnvSummary) {
+            lastEnvSummary = summary
+            val bad = perms.contains("DENIED") || adapterState != "enabled"
+            addLog(summary, if (bad) LogType.ERROR else LogType.INFO)
+        }
+    }
+
+    private fun logScanBlockIfChanged(reason: String?) {
+        if (reason == lastScanBlockReason) return
+        lastScanBlockReason = reason
+        if (reason == null) addLog("Scanning active", LogType.INFO)
+        else addLog("X SCAN BLOCKED - $reason", LogType.ERROR)
+    }
+
+    private fun logLoadBlockIfChanged(reason: String?) {
+        if (reason == lastLoadBlockReason) return
+        lastLoadBlockReason = reason
+        if (reason != null) addLog("X DEVICE LIST BLOCKED - $reason", LogType.ERROR)
+    }
+
     private fun hasPermission(permission: String): Boolean = ActivityCompat.checkSelfPermission(getApplication(), permission) == PackageManager.PERMISSION_GRANTED
 }
