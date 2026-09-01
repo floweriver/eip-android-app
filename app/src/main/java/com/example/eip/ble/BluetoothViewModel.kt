@@ -1,6 +1,9 @@
-// v1.2.1 | 2026-08-31 | 修正 API 33 以下收不到任何 BLE 通知（缺兩參數回呼）
+// v1.3.0 | 2026-09-01 | 自動連線改為失敗次數輪替，避免卡在連不上的那支筆
 //
 // changelog:
+//   v1.3.0 | 2026-09-01 | 自動連線候選改為「先比失敗次數，同分才比使用者偏好」。
+//                         原本 preferredDeviceId 無條件勝出，兩支配對過但只有一支
+//                         在線時，會卡在不在的那支無限重試，另一支永遠輪不到。
 //   v1.2.1 | 2026-08-31 | 補上兩參數版 onCharacteristicChanged。三參數版是 API 33
 //                         才新增的，只覆寫它會讓 API 24-32 的裝置（Fire 平板、
 //                         舊 Android 平板）收到的每一則通知都被靜默丟棄。
@@ -74,6 +77,27 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     // 只記錄一次：確認舊版通知路徑真的有被呼叫到（驗證 v1.2.1 修正用）
     private var loggedLegacyNotifyPath = false
+
+    // --- 連線失敗次數（T-02 / 「兩支配對過、只有一支在線」）---
+    // 已配對的筆一律標成 isNearby=true（ChromeOS 需要，見 docs 地雷），所以不在
+    // 身邊的筆也永遠是候選。若 preferredDeviceId 無條件勝出，就會卡在同一支連不
+    // 上的筆上無限重試（12 秒逾時 + 5 秒間隔），在線的那支永遠輪不到，使用者就
+    // 一直停在配對頁。改為先比失敗次數，讓輪替自然發生。
+    // 刻意不依賴掃描結果判斷「真的在不在附近」——那會把 08f1ced 的 ChromeOS
+    // 修正弄回去。失敗次數只從實際連線結果學習。
+    private val connectFailCounts = mutableMapOf<String, Int>()
+
+    private fun noteConnectFailure(address: String) {
+        val n = (connectFailCounts[address] ?: 0) + 1
+        connectFailCounts[address] = n
+        addLog("Connect failure #$n for $address - deprioritised", LogType.INFO)
+    }
+
+    private fun noteConnectSuccess(address: String) {
+        if (connectFailCounts.remove(address) != null) {
+            addLog("Connect recovered for $address - priority restored", LogType.INFO)
+        }
+    }
 
     // 手動切換時暫停 auto-connect，避免 loop 搶著把舊筆連回去
     @Volatile private var manualSwitching = false
@@ -173,7 +197,11 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                             val candidates = currentDevices.filter {
                                 it.connectionState == DeviceConnectionState.DISCONNECTED && it.isNearby
                             }
-                            val target = candidates.firstOrNull { it.id == preferredDeviceId } ?: candidates.firstOrNull()
+                            // 先比失敗次數（少的優先），同分才讓使用者最後選定的裝置優先
+                            val target = candidates.sortedWith(
+                                compareBy<BleDevice> { connectFailCounts[it.id] ?: 0 }
+                                    .thenByDescending { it.id == preferredDeviceId }
+                            ).firstOrNull()
                             if (target != null) {
                                 connect(target)
                             }
@@ -204,6 +232,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } else {
                 addLog("GATT Error: status=$status", LogType.ERROR)
+                noteConnectFailure(deviceAddress)
                 updateDeviceConnectionState(deviceAddress, DeviceConnectionState.DISCONNECTED)
                 closeGatt()
                 resetState()
@@ -225,11 +254,17 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             val pencilSvc = gatt.getService(BleProtocol.Pencil.SERVICE_UUID)
             if (pencilSvc == null) {
                 addLog("X ffe0 NOT FOUND - every command will be silently dropped", LogType.ERROR)
+                noteConnectFailure(gatt.device.address)
             } else {
                 val w = pencilSvc.getCharacteristic(BleProtocol.Pencil.WRITE_CHAR_UUID)
                 val n = pencilSvc.getCharacteristic(BleProtocol.Pencil.NOTIFY_CHAR_UUID)
+                val usable = w != null && n != null
                 addLog("ffe0 OK - write(ffe2)=${w != null} notify(ffe3)=${n != null}",
-                    if (w != null && n != null) LogType.INFO else LogType.ERROR)
+                    if (usable) LogType.INFO else LogType.ERROR)
+                // 服務齊全才算真正連上；缺件雖然目前仍會宣告 READY（階段 3 會修），
+                // 但先記為失敗，連線掉落後才輪得到另一支。
+                if (usable) noteConnectSuccess(gatt.device.address)
+                else noteConnectFailure(gatt.device.address)
             }
             // --- 診斷日誌結束 ---
 
@@ -534,6 +569,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             val dev = _discoveredDevices.value.find { it.id == address }
             if (dev != null && dev.connectionState != DeviceConnectionState.READY) {
                 addLog("Connect timeout, retrying: $address", LogType.ERROR)
+                noteConnectFailure(address)
                 closeGatt()
                 updateDeviceConnectionState(address, DeviceConnectionState.DISCONNECTED)
                 resetState()
