@@ -1,6 +1,13 @@
-// v1.1.0 | 2026-08-31 | Debug Logs 新增一鍵複製（含裝置與版本資訊表頭）
+// v1.3.0 | 2026-09-01 | HOME 移至進階組；選單移除 Gemini
 //
 // changelog:
+//   v1.3.0 | 2026-09-01 | HOME 從 Universal 移到 Advanced；Gemini 不再提供選擇。
+//                         Gemini 仍保留在 Function.mapping 中——若筆上早已設定
+//                         Gemini，畫面要能正確顯示名稱，不能變成 "No Function"。
+//   v1.2.0 | 2026-09-01 | 設定面板原本是不可捲動的 Column，橫向時面板變矮，
+//                         超出的內容（含 Debug Logs）直接搆不到。改為可捲動；
+//                         Debug Logs 的 weight(1f) 必須改成固定高度，weight 不能
+//                         用在 verticalScroll 的 Column 裡。
 //   v1.1.0 | 2026-08-31 | Debug Logs 加 Copy 按鈕；複製內容前置 App 版本、
 //                         裝置型號、Android 版本、韌體版本，方便回報時直接貼上。
 //   v1.0.0 | —          | 初版（進版控前）
@@ -24,8 +31,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -406,6 +415,8 @@ fun DetailPanelContent(
                 Spacer(modifier = Modifier.height(20.dp)); Box(modifier = Modifier.weight(1f)) { DrawingTestBoard() }
             }
             DetailPanel.SETTINGS -> {
+              // 橫向時面板高度不足，內容會超出可視範圍且無法捲動（T-11）
+              Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text("Device Settings", fontSize = 13.sp, color = Text_LightGray); Spacer(modifier = Modifier.height(8.dp))
                 DetailItemCard { Text("Auto Sleep Timer", fontWeight = FontWeight.Bold, fontSize = 15.sp); Slider(value = shutdownTime.toFloat(), onValueChange = { viewModel.setSmartShutdownTime(it.roundToInt()) }, valueRange = 1f..15f, colors = SliderDefaults.colors(thumbColor = EiP_Orange, activeTrackColor = EiP_Orange)); Text("$shutdownTime minutes", modifier = Modifier.align(Alignment.End), fontSize = 12.sp, color = Text_LightGray) }
                 Spacer(modifier = Modifier.height(32.dp)); Text("Support & Guides", fontSize = 13.sp, color = Text_LightGray); Spacer(modifier = Modifier.height(8.dp))
@@ -472,16 +483,21 @@ fun DetailPanelContent(
                         TextButton(onClick = { viewModel.clearLogs() }) { Text("Clear", fontSize = 12.sp, color = EiP_Orange) }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Surface(modifier = Modifier.fillMaxWidth().weight(1f), color = Color(0xFF1C1C1E), shape = RoundedCornerShape(8.dp)) {
+                    Surface(modifier = Modifier.fillMaxWidth().height(320.dp), color = Color(0xFF1C1C1E), shape = RoundedCornerShape(8.dp)) {
                         val listState = rememberLazyListState()
                         LaunchedEffect(communicationLog.size) { if (communicationLog.isNotEmpty()) { listState.animateScrollToItem(communicationLog.size - 1) } }
                         LazyColumn(state = listState, modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) { items(communicationLog) { log -> Text(text = "[${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(log.timestamp))}] ${log.message}", color = when (log.type) { LogType.SENT -> Color(0xFF64D2FF); LogType.RECEIVED -> Color(0xFF34C759); LogType.ERROR -> Color(0xFFFF453A); LogType.INFO -> Color.White }, fontSize = 10.sp, fontFamily = FontFamily.Monospace) } }
                     }
                 }
+              }
             }
             DetailPanel.MAPPING -> {
-                val universalCodes = listOf(BleProtocol.Pencil.Function.NONE, BleProtocol.Pencil.Function.HOME, BleProtocol.Pencil.Function.BRIGHTNESS_UP, BleProtocol.Pencil.Function.BRIGHTNESS_DOWN, BleProtocol.Pencil.Function.VOLUME_UP, BleProtocol.Pencil.Function.VOLUME_DOWN, BleProtocol.Pencil.Function.COPY, BleProtocol.Pencil.Function.PASTE, BleProtocol.Pencil.Function.SELECT_ALL, BleProtocol.Pencil.Function.PREV_STEP)
-                val allFuncs = BleProtocol.Pencil.Function.mapping.toList(); val universalList = allFuncs.filter { it.first in universalCodes }; val advancedList = allFuncs.filter { it.first !in universalCodes }
+                // HOME 移至進階組（不列在 universalCodes 即自動落入 advancedList）
+                val universalCodes = listOf(BleProtocol.Pencil.Function.NONE, BleProtocol.Pencil.Function.BRIGHTNESS_UP, BleProtocol.Pencil.Function.BRIGHTNESS_DOWN, BleProtocol.Pencil.Function.VOLUME_UP, BleProtocol.Pencil.Function.VOLUME_DOWN, BleProtocol.Pencil.Function.COPY, BleProtocol.Pencil.Function.PASTE, BleProtocol.Pencil.Function.SELECT_ALL, BleProtocol.Pencil.Function.PREV_STEP)
+                // 不提供選擇的功能。注意只從「選單」濾掉，Function.mapping 保持完整——
+                // 筆上若已設定 Gemini，標籤仍需顯示正確名稱而非 "No Function"。
+                val hiddenCodes = listOf(BleProtocol.Pencil.Function.GEMINI)
+                val allFuncs = BleProtocol.Pencil.Function.mapping.toList().filter { it.first !in hiddenCodes }; val universalList = allFuncs.filter { it.first in universalCodes }; val advancedList = allFuncs.filter { it.first !in universalCodes }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { item { Text("Universal (All Tablets)", fontSize = 13.sp, color = Text_LightGray, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) }; items(universalList) { (code, name) -> DetailItemCard(onClick = { viewModel.setPencilFunctionWithRetry(targetKeyCode, code) }) { Row(verticalAlignment = Alignment.CenterVertically) { Text(name, modifier = Modifier.weight(1f), fontSize = 14.sp); if (settingsState[targetKeyCode] == code) Icon(Icons.Default.Check, null, tint = EiP_Orange) } } }; item { Text("Advanced (Device Specific)", fontSize = 13.sp, color = Text_LightGray, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)) }; items(advancedList) { (code, name) -> DetailItemCard(onClick = { viewModel.setPencilFunctionWithRetry(targetKeyCode, code) }) { Row(verticalAlignment = Alignment.CenterVertically) { Text(name, modifier = Modifier.weight(1f), fontSize = 14.sp); if (settingsState[targetKeyCode] == code) Icon(Icons.Default.Check, null, tint = EiP_Orange) } } } }
             }
             else -> {}
