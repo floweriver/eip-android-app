@@ -1,6 +1,14 @@
-// v1.3.0 | 2026-09-01 | 自動連線改為失敗次數輪替，避免卡在連不上的那支筆
+// v1.4.0 | 2026-09-01 | BLE 移出主執行緒（修 ANR）、排除非觸控筆、連線輪替大幅加速
 //
 // changelog:
+//   v1.4.0 | 2026-09-01 | (1) 所有 BLE 迴圈改到 Dispatchers.IO——viewModelScope 預設
+//                         是主執行緒，而 startScan/connectGatt/disconnect/bondedDevices
+//                         都是同步 binder IPC，堆疊一忙就卡主執行緒導致 ANR。
+//                         (2) 候選排除鍵盤等非觸控筆配件（白連一輪要 12 秒）。
+//                         (3) 平手改挑最久沒試過的，避免重試剛失敗的那支。
+//                         (4) 失敗後立刻試下一個，不空等 5 秒。
+//                         (5) 逾時 12s -> 8s/5s；失敗裝置退避 15/30/60s。
+//                         (6) 曾經連上才斷線（如 status=19 對方主動斷）不算連線失敗。
 //   v1.3.0 | 2026-09-01 | 自動連線候選改為「先比失敗次數，同分才比使用者偏好」。
 //                         原本 preferredDeviceId 無條件勝出，兩支配對過但只有一支
 //                         在線時，會卡在不在的那支無限重試，另一支永遠輪不到。
@@ -28,6 +36,7 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -87,10 +96,55 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     // 修正弄回去。失敗次數只從實際連線結果學習。
     private val connectFailCounts = mutableMapOf<String, Int>()
 
+    // 最後一次嘗試連線的時間：平手時挑「最久沒試過」的，避免重試剛失敗的那支
+    private val lastAttemptAt = mutableMapOf<String, Long>()
+    // 本次連線是否曾經真的可用（ffe0/ffe2/ffe3 齊全）。用來分辨
+    // 「連不上」與「連上後對方主動斷線」——後者不該算成連線失敗。
+    @Volatile private var currentConnectionUsable = false
+    // 失敗後不必等滿一輪 5 秒，立刻試下一個候選
+    @Volatile private var retryImmediately = false
+
     private fun noteConnectFailure(address: String) {
         val n = (connectFailCounts[address] ?: 0) + 1
         connectFailCounts[address] = n
+        retryImmediately = true
         addLog("Connect failure #$n for $address - deprioritised", LogType.INFO)
+    }
+
+    /** 連續失敗的裝置逐步拉長重試間隔，既省電也減輕藍牙堆疊負擔。 */
+    private fun cooldownMsFor(fails: Int): Long = when {
+        fails <= 0 -> 0L
+        fails == 1 -> 15_000L
+        fails == 2 -> 30_000L
+        else -> 60_000L
+    }
+
+    private fun isCoolingDown(address: String): Boolean {
+        val fails = connectFailCounts[address] ?: 0
+        if (fails == 0) return false
+        val last = lastAttemptAt[address] ?: 0L
+        return System.currentTimeMillis() - last < cooldownMsFor(fails)
+    }
+
+    /** 沒失敗過的給寬裕一點；已知有問題的快速放棄。實測成功連線都在 1 秒內完成。 */
+    private fun connectTimeoutMsFor(address: String): Long =
+        if ((connectFailCounts[address] ?: 0) == 0) 8000L else 5000L
+
+    // 產品線只有觸控筆（Ultra 名稱含 usi、Pencil X 含 pencil）。鍵盤等配件也叫
+    // eiP，若不排除會被當成筆去連，每次白白耗掉一整個逾時週期。
+    private val loggedNonPencils = mutableSetOf<String>()
+
+    fun isPencilName(name: String?): Boolean {
+        val n = name?.lowercase() ?: return false
+        if (!n.contains("eip")) return false
+        if (n.contains("magnetix")) return false
+        return n.contains("usi") || n.contains("pencil")
+    }
+
+    private fun noteSkippedDevice(address: String, name: String?) {
+        if (name != null && name.lowercase().contains("eip") && loggedNonPencils.add(address)) {
+            addLog("Skipped non-pencil: $name", LogType.INFO)
+        }
     }
 
     private fun noteConnectSuccess(address: String) {
@@ -123,11 +177,11 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     list.any { it.id == addr } ->
                         list.map { if (it.id == addr) it.copy(isNearby = true) else it }
                     // 掃到名稱且是 eip 筆：新增（涵蓋尚未配對的筆，ChromeOS 常見）
-                    name != null && name.contains("eip", ignoreCase = true) && !name.contains("magnetix", ignoreCase = true) -> {
+                    name != null && isPencilName(name) -> {   // 明確判 null 讓 name 智慧轉型為非空
                         addLog("Discovered $name ($addr)", LogType.INFO)
                         list + BleDevice(peripheral = device, name = name, rssi = result.rssi, isNearby = true)
                     }
-                    else -> list
+                    else -> { noteSkippedDevice(addr, name); list }
                 }
             }
         }
@@ -135,7 +189,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun startScanning() {
         if (scanJob?.isActive == true) return
-        scanJob = viewModelScope.launch {
+        scanJob = viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 try {
                     // 診斷 (T-08)：掃描迴圈是唯一無條件持續運轉的地方，
@@ -178,7 +232,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun startAutoConnectLoop() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             delay(1000)
             while (true) {
                 try {
@@ -197,11 +251,14 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                             val candidates = currentDevices.filter {
                                 it.connectionState == DeviceConnectionState.DISCONNECTED && it.isNearby
                             }
-                            // 先比失敗次數（少的優先），同分才讓使用者最後選定的裝置優先
-                            val target = candidates.sortedWith(
+                            // 排序：失敗次數少的優先 → 最久沒試過的優先 → 使用者偏好
+                            val ranked = candidates.sortedWith(
                                 compareBy<BleDevice> { connectFailCounts[it.id] ?: 0 }
+                                    .thenBy { lastAttemptAt[it.id] ?: 0L }
                                     .thenByDescending { it.id == preferredDeviceId }
-                            ).firstOrNull()
+                            )
+                            // 退避中的先跳過；全部都在退避就這輪不動，等冷卻到期
+                            val target = ranked.firstOrNull { !isCoolingDown(it.id) }
                             if (target != null) {
                                 connect(target)
                             }
@@ -210,7 +267,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                 } catch (e: Exception) {
                     Log.e("BleDebug", "AutoConnect Loop Error: ${e.message}")
                 }
-                delay(5000)
+                // 剛失敗過就立刻試下一個候選，不必空等一整輪
+                if (retryImmediately) { retryImmediately = false; delay(500) } else { delay(5000) }
             }
         }
     }
@@ -231,8 +289,15 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     resetState()
                 }
             } else {
-                addLog("GATT Error: status=$status", LogType.ERROR)
-                noteConnectFailure(deviceAddress)
+                if (currentConnectionUsable) {
+                    // 連上並可用之後才斷線（例如 status=19 對方主動斷、筆進入休眠）
+                    // 屬於正常行為，不該算成「連不上」而降低它的優先序。
+                    addLog("Disconnected by peer (status=$status) - not a connect failure", LogType.INFO)
+                    retryImmediately = true
+                } else {
+                    addLog("GATT Error: status=$status", LogType.ERROR)
+                    noteConnectFailure(deviceAddress)
+                }
                 updateDeviceConnectionState(deviceAddress, DeviceConnectionState.DISCONNECTED)
                 closeGatt()
                 resetState()
@@ -263,6 +328,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     if (usable) LogType.INFO else LogType.ERROR)
                 // 服務齊全才算真正連上；缺件雖然目前仍會宣告 READY（階段 3 會修），
                 // 但先記為失敗，連線掉落後才輪得到另一支。
+                currentConnectionUsable = usable
                 if (usable) noteConnectSuccess(gatt.device.address)
                 else noteConnectFailure(gatt.device.address)
             }
@@ -357,7 +423,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun queryInitialStatus() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             delay(1500)
             sendPencilCommand(BleProtocol.Pencil.CMD_FIRMWARE_QUERY, null, byteArrayOf(0x00))
             delay(20)
@@ -502,9 +568,10 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             val bonded = bluetoothAdapter!!.bondedDevices
             val connectedToSystem = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
 
-            fun isPencil(name: String?): Boolean {
-                val n = name ?: return false
-                return n.contains("eip", ignoreCase = true) && !n.contains("magnetix", ignoreCase = true)
+            fun isPencil(d: BluetoothDevice): Boolean {
+                val n = try { d.name } catch (e: SecurityException) { null }
+                if (!isPencilName(n)) { noteSkippedDevice(d.address, n); return false }
+                return true
             }
 
             val existingList = _discoveredDevices.value
@@ -514,14 +581,14 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             // 1. 已配對的 eip 筆 → 直接視為可連線。
             //    ChromeOS 上筆常已連線但「不再廣播」，掃描與 getConnectedDevices(GATT) 都偵測不到，
             //    因此不能依賴這兩個來源；已配對代表使用者綁定過，直接允許連線，連不上再回到 DISCONNECTED。
-            bonded.filter { isPencil(try { it.name } catch (e: SecurityException) { null }) }.forEach { d ->
+            bonded.filter { isPencil(it) }.forEach { d ->
                 val existing = existingList.find { it.id == d.address }
                 result[d.address] = existing?.copy(isNearby = true)
                     ?: BleDevice(peripheral = d, name = d.name ?: "eiP Device", rssi = -1, isNearby = true)
             }
 
             // 2. 系統已連線但「未配對」的 eip 筆（ChromeOS 常見：連線但不 bond）
-            connectedToSystem.filter { isPencil(try { it.name } catch (e: SecurityException) { null }) }.forEach { d ->
+            connectedToSystem.filter { isPencil(it) }.forEach { d ->
                 if (!result.containsKey(d.address)) {
                     val existing = existingList.find { it.id == d.address }
                     result[d.address] = existing?.copy(isNearby = true)
@@ -548,6 +615,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         preferredDeviceId = device.id
+        lastAttemptAt[device.id] = System.currentTimeMillis()
+        currentConnectionUsable = false
         val bond = when (device.peripheral?.bondState) {
             BluetoothDevice.BOND_BONDED -> "bonded"
             BluetoothDevice.BOND_BONDING -> "bonding"
@@ -564,11 +633,12 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     // 這可打破「連線卡在 CONNECTING → auto-connect 以為還在連 → 永不重試」的死鎖。
     private fun startConnectTimeout(address: String) {
         connectTimeoutJob?.cancel()
-        connectTimeoutJob = viewModelScope.launch {
-            delay(12000)
+        val timeoutMs = connectTimeoutMsFor(address)
+        connectTimeoutJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(timeoutMs)
             val dev = _discoveredDevices.value.find { it.id == address }
             if (dev != null && dev.connectionState != DeviceConnectionState.READY) {
-                addLog("Connect timeout, retrying: $address", LogType.ERROR)
+                addLog("Connect timeout after ${timeoutMs}ms: $address", LogType.ERROR)
                 noteConnectFailure(address)
                 closeGatt()
                 updateDeviceConnectionState(address, DeviceConnectionState.DISCONNECTED)
@@ -597,7 +667,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         pendingSwitchTarget = target
         manualSwitching = true
         addLog("Switching to ${target.name}", LogType.INFO)
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             closeGatt()
             current?.let { updateDeviceConnectionState(it.id, DeviceConnectionState.DISCONNECTED) }
             resetState()
