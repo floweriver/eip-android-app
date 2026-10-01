@@ -13,3 +13,17 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Kotlin 編譯器本機工作目錄
+.kotlin/
+
+# 手動備份檔
+*.bak
+
+# 建置產物：發布用 AAB/APK 不進版控，
+# 已上架的成品 Play Console 的「App Bundle 探索工具」永遠留存，
+# 需要原始碼時用 tag（如 v1.0.11）回溯即可。
+/app/release/
+
+# Android Studio 的本機部署目標（每台機器不同，不該共用）
+/.idea/deploymentTargetSelector.xml
