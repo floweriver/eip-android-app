@@ -54,4 +54,8 @@ data class BleDevice(
         get() = name.lowercase().let { n ->
             n.contains("keyboard") || n.contains("magic") || n.contains("hyperkeys") || n.contains("hyper") || name == "SK-M1300"
         }
+
+    // eiP Flip Keyboard（KL122）。協議與畫面都和觸控筆分開，連線後依此分流。
+    val isFlipKeyboard: Boolean
+        get() = FlipProtocol.isFlipKeyboardName(name)
 }

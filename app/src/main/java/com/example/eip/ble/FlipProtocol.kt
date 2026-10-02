@@ -264,6 +264,15 @@ object FlipProtocol {
     val WRITE_CHAR_UUIDS: List<UUID> = listOf("ff02".toFullUuid(), "ffe2".toFullUuid())
     val NOTIFY_CHAR_UUIDS: List<UUID> = listOf("ff01".toFullUuid(), "ffe3".toFullUuid())
 
+    /**
+     * 是否為 eiP Flip Keyboard。其他 eiP 鍵盤（HyperKeys、SK-M1300 等）的功能碼
+     * 編號不同，本 App 不支援，不可一併放行。
+     */
+    fun isFlipKeyboardName(name: String?): Boolean {
+        val n = name?.lowercase() ?: return false
+        return n.contains("eip") && n.contains("flip")
+    }
+
     /** 帧長度固定 9 bytes：帧頭 2 + Cmd 1 + Data 5 + CRC 1。 */
     const val FRAME_LENGTH = 9
 
