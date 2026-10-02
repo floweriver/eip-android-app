@@ -1,6 +1,8 @@
-// v1.3.0 | 2026-09-01 | HOME 移至進階組；選單移除 Gemini
+// v1.4.0 | 2026-10-01 | 連上 eiP Flip Keyboard 時改顯示鍵盤設定畫面
 //
 // changelog:
+//   v1.4.0 | 2026-10-01 | 依連線裝置類型分流：Flip 鍵盤走 FlipKeyboardScreen，
+//                         且不跳筆的教學。TopHeader 標題改為可傳入，預設值不變。
 //   v1.3.0 | 2026-09-01 | HOME 從 Universal 移到 Advanced；Gemini 不再提供選擇。
 //                         Gemini 仍保留在 Function.mapping 中——若筆上早已設定
 //                         Gemini，畫面要能正確顯示名稱，不能變成 "No Function"。
@@ -116,7 +118,8 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
     var showTutorial by rememberSaveable { mutableStateOf(false) }
     // 第一次成功連上筆(且沒看過教學)時，跳出彈窗教學
     LaunchedEffect(activeDevice?.id) {
-        if (activeDevice != null && !hasSeenTutorial(context)) showTutorial = true
+        // 這份教學是筆的；鍵盤的教學尚未移植
+        if (activeDevice != null && !activeDevice.isFlipKeyboard && !hasSeenTutorial(context)) showTutorial = true
     }
     var activePanel by remember { mutableStateOf(DetailPanel.NONE) }
     var targetKeyCode by remember { mutableStateOf(BleProtocol.Pencil.KeyCode.TOP_SINGLE) }
@@ -130,6 +133,8 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
     Box(modifier = Modifier.fillMaxSize().background(Bg_Gray)) {
         if (activeDevice == null) {
             DeviceScannerOverlay(discoveredDevices, viewModel)
+        } else if (activeDevice.isFlipKeyboard) {
+            FlipKeyboardScreen(activeDevice, viewModel)
         } else {
             val isPanelOpen = activePanel != DetailPanel.NONE
             val panelWidth = if (isLandscape) 480.dp else 320.dp
@@ -205,7 +210,7 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
 }
 
 @Composable
-fun TopHeader(device: BleDevice, viewModel: BluetoothViewModel) {
+fun TopHeader(device: BleDevice, viewModel: BluetoothViewModel, title: String = "USI 2.0 Ultra") {
     val batteryLevel by viewModel.batteryLevel.collectAsState()
     val devices by viewModel.discoveredDevices.collectAsState()
     var menuOpen by remember { mutableStateOf(false) }
@@ -219,7 +224,7 @@ fun TopHeader(device: BleDevice, viewModel: BluetoothViewModel) {
                     indication = null
                 ) { menuOpen = true }
             ) {
-                Text("USI 2.0 Ultra", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
+                Text(title, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Text_Black)
                 Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.padding(start = 2.dp).size(16.dp))
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
