@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 目前只有 eiP Flip Keyboard 的畫面有中文；觸控筆畫面的文字寫在程式裡，仍為英文。 -->
+    <bool name="flip_use_chinese_names">true</bool>
+    <string name="flip_device_1">裝置1</string>
+    <string name="flip_device_2">裝置2</string>
+    <string name="flip_device_3">裝置3</string>
+    <string name="flip_wired_mode">接線模式</string>
+    <string name="flip_reload">重新讀取</string>
+    <string name="flip_currently_in_use">鍵盤目前使用中：%1$s</string>
+    <string name="flip_step1_title">選擇裝置</string>
+    <string name="flip_step1_subtitle">F10~F12 為三台藍牙裝置，各自記錄一組設定；接線模式為固定行為</string>
+    <string name="flip_step2_title">選擇系統</string>
+    <string name="flip_step2_subtitle">%1$s所連接的裝置是哪個系統</string>
+    <string name="flip_step3_title">設定快捷鍵</string>
+    <string name="flip_step3_title_wired">快捷鍵</string>
+    <string name="flip_step3_subtitle">依 %1$s 可用的功能指派三顆鍵</string>
+    <string name="flip_step3_subtitle_wired">接線時固定為複製／貼上／全選，無法變更</string>
+    <string name="flip_shortcut_key">快捷%1$d</string>
+    <string name="flip_wired_cannot_change">接線模式無法更改</string>
+    <string name="flip_all_disabled">三顆鍵皆為「停用」，送出後將停用%1$s。</string>
+    <string name="flip_unsent_changes">有尚未送出的變更</string>
+    <string name="flip_send_settings">送出%1$s設定</string>
+    <string name="flip_group_general">通用</string>
+    <string name="flip_sleep">休眠</string>
+    <string name="flip_sleep_timer">休眠時間</string>
+    <string name="flip_minutes">%1$d 分鐘</string>
+    <string name="flip_send_sleep">送出休眠時間</string>
+    <string name="flip_function_error">異常</string>
+    <string name="flip_function_undefined">未定義 0x%1$02X</string>
+    <string name="flip_select_function">選擇功能 － %1$s</string>
+    <string name="flip_search_function">搜尋功能</string>
+    <string name="flip_cancel">取消</string>
+    <string name="flip_done">完成</string>
+    <string name="flip_status_not_loaded">尚未讀取鍵盤設定</string>
+    <string name="flip_status_disconnected">鍵盤已斷線</string>
+    <string name="flip_status_loading">讀取鍵盤設定中…</string>
+    <string name="flip_status_query_failed">無法送出查詢，請確認連線</string>
+    <string name="flip_status_all_loaded">已讀回三台裝置的設定</string>
+    <string name="flip_status_loaded_current">已讀回鍵盤設定，目前為%1$s</string>
+    <string name="flip_status_loaded_no_current">已讀回設定，但鍵盤未回報目前使用中的裝置</string>
+    <string name="flip_status_sent">已送出%1$s設定</string>
+    <string name="flip_status_applied">%1$s已生效</string>
+    <string name="flip_status_field_error">%1$s設定有欄位異常，請重送</string>
+    <string name="flip_status_send_failed">送出失敗，請確認連線</string>
+    <string name="flip_status_sleep_sent">已送出休眠時間 %1$d 分鐘</string>
+    <string name="flip_status_sleep_set">休眠時間已設為 %1$d 分鐘</string>
+    <string name="flip_status_sleep_error">休眠時間設定異常，請重送</string>
+</resources>

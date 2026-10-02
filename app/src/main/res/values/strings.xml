@@ -29,4 +29,52 @@
     <string name="unit_mins">%1$d mins</string>
     <string name="status_unknown">Unknown</string>
     <string name="log_title">Communication Log</string>
+
+    <!-- eiP Flip Keyboard（KL122）。功能名稱的中英文放在 FlipFunctionCatalog，
+         flip_use_chinese_names 決定取哪一欄，須與有無中文字串資源一致。 -->
+    <bool name="flip_use_chinese_names">false</bool>
+    <string name="flip_device_1">Device 1</string>
+    <string name="flip_device_2">Device 2</string>
+    <string name="flip_device_3">Device 3</string>
+    <string name="flip_wired_mode">Wired Mode</string>
+    <string name="flip_reload">Reload</string>
+    <string name="flip_currently_in_use">Currently in use: %1$s</string>
+    <string name="flip_step1_title">Select Device</string>
+    <string name="flip_step1_subtitle">F10–F12 are three Bluetooth devices, each with its own settings. Wired mode is fixed.</string>
+    <string name="flip_step2_title">Select System</string>
+    <string name="flip_step2_subtitle">Which system is %1$s connected to?</string>
+    <string name="flip_step3_title">Set Shortcuts</string>
+    <string name="flip_step3_title_wired">Shortcuts</string>
+    <string name="flip_step3_subtitle">Assign three keys from the functions available on %1$s</string>
+    <string name="flip_step3_subtitle_wired">Fixed to Copy / Paste / Select All when wired. Cannot be changed.</string>
+    <string name="flip_shortcut_key">Shortcut %1$d</string>
+    <string name="flip_wired_cannot_change">Wired mode cannot be changed</string>
+    <string name="flip_all_disabled">All three keys are set to Disabled. Sending will disable %1$s.</string>
+    <string name="flip_unsent_changes">You have unsent changes</string>
+    <string name="flip_send_settings">Send %1$s Settings</string>
+    <string name="flip_group_general">General</string>
+    <string name="flip_sleep">Sleep</string>
+    <string name="flip_sleep_timer">Sleep Timer</string>
+    <string name="flip_minutes">%1$d min</string>
+    <string name="flip_send_sleep">Send Sleep Timer</string>
+    <string name="flip_function_error">Error</string>
+    <string name="flip_function_undefined">Undefined 0x%1$02X</string>
+    <string name="flip_select_function">Select Function － %1$s</string>
+    <string name="flip_search_function">Search functions</string>
+    <string name="flip_cancel">Cancel</string>
+    <string name="flip_done">Done</string>
+    <string name="flip_status_not_loaded">Keyboard settings not loaded</string>
+    <string name="flip_status_disconnected">Keyboard disconnected</string>
+    <string name="flip_status_loading">Loading keyboard settings…</string>
+    <string name="flip_status_query_failed">Could not send query. Check the connection.</string>
+    <string name="flip_status_all_loaded">Settings loaded for all three devices</string>
+    <string name="flip_status_loaded_current">Settings loaded. Currently in use: %1$s</string>
+    <string name="flip_status_loaded_no_current">Settings loaded, but the keyboard did not report which device is in use</string>
+    <string name="flip_status_sent">%1$s settings sent</string>
+    <string name="flip_status_applied">%1$s applied</string>
+    <string name="flip_status_field_error">%1$s settings returned an error. Please send again.</string>
+    <string name="flip_status_send_failed">Send failed. Check the connection.</string>
+    <string name="flip_status_sleep_sent">Sleep timer set to %1$d min sent</string>
+    <string name="flip_status_sleep_set">Sleep timer set to %1$d min</string>
+    <string name="flip_status_sleep_error">Sleep timer returned an error. Please send again.</string>
 </resources>
