@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 日文目前只有 eiP Flip Keyboard 的畫面；功能名稱沿用英文（FlipFunctionCatalog 只有中英）。 -->
+    <bool name="flip_use_chinese_names">false</bool>
+    <string name="flip_device_1">デバイス 1</string>
+    <string name="flip_device_2">デバイス 2</string>
+    <string name="flip_device_3">デバイス 3</string>
+    <string name="flip_wired_mode">有線モード</string>
+    <string name="flip_group_general">一般</string>
+    <string name="flip_sleep_timer">スリープ時間</string>
+    <string name="flip_minutes">%1$d 分</string>
+    <string name="flip_function_error">エラー</string>
+    <string name="flip_function_undefined">未定義 0x%1$02X</string>
+    <string name="flip_cancel">キャンセル</string>
+    <string name="flip_status_not_loaded">キーボード設定を未読み込み</string>
+    <string name="flip_status_disconnected">キーボードが切断されました</string>
+    <string name="flip_status_loading">キーボード設定を読み込み中…</string>
+    <string name="flip_status_query_failed">問い合わせを送信できません。接続を確認してください。</string>
+    <string name="flip_status_all_loaded">3 台のデバイスの設定を読み込みました</string>
+    <string name="flip_status_loaded_current">設定を読み込みました。使用中：%1$s</string>
+    <string name="flip_status_loaded_no_current">設定を読み込みましたが、使用中のデバイスが報告されませんでした</string>
+    <string name="flip_status_sent">%1$s の設定を送信しました</string>
+    <string name="flip_status_applied">%1$s を適用しました</string>
+    <string name="flip_status_field_error">%1$s の設定でエラーが返されました。もう一度送信してください。</string>
+    <string name="flip_status_send_failed">送信に失敗しました。接続を確認してください。</string>
+    <string name="flip_status_sleep_sent">スリープ時間 %1$d 分を送信しました</string>
+    <string name="flip_status_sleep_set">スリープ時間を %1$d 分に設定しました</string>
+    <string name="flip_status_sleep_error">スリープ時間の設定でエラーが返されました。もう一度送信してください。</string>
+    <string name="flip_custom_keys_title">カスタムキー</string>
+    <string name="flip_custom_keys_subtitle">F10–F12 でデバイスを切り替えます。デバイスごとにキーを設定できます。有線モードは設定できません。</string>
+    <string name="flip_active">使用中</string>
+    <string name="flip_inactive">未使用</string>
+    <string name="flip_system_mode">システム</string>
+    <string name="flip_system_mode_hint">デバイスのシステムを選択します。%1$s を押すと%2$sのショートカットが有効になります。</string>
+    <string name="flip_system_mode_hint_wired">有線モードでは以下の既定のショートカットが使われます。</string>
+    <string name="flip_system_not_set">システム未選択</string>
+    <string name="flip_not_selected">未選択</string>
+    <string name="flip_shortcuts">ショートカット</string>
+    <string name="flip_reset">リセット</string>
+    <string name="flip_reset_device">このデバイスをリセット</string>
+    <string name="flip_reset_confirm_title">%1$sのショートカットをリセットしますか？</string>
+    <string name="flip_reset_confirm_message">3 つのショートカットが既定（コピー、貼り付け、すべて選択）に戻り、すぐにキーボードへ書き込まれます。</string>
+    <string name="flip_platform">アプリ</string>
+    <string name="flip_function">機能</string>
+    <string name="flip_wired_subtitle">カスタマイズ不可</string>
+    <string name="flip_wired_locked">有線モードのショートカットは固定（コピー／ペースト／すべて選択）で、変更できません。カスタマイズするには Bluetooth 接続のデバイス 1～3 をご利用ください。</string>
+    <string name="flip_wired_preview_notice">有線モードのショートカットは固定で変更できません</string>
+    <string name="flip_wired_locked_badge">ロック中</string>
+    <string name="flip_auto_sleep">自動スリープ</string>
+    <string name="flip_auto_sleep_subtitle">操作がないと自動でスリープして節電します</string>
+    <string name="flip_copyright">Copyright©%1$d Lemeng Limited company</string>
+
+    <!-- 系統不符／鍵碼不符的提醒 -->
+    <string name="flip_system_mismatch_message">このデバイスは %1$s に設定されており、キーボードはそのシステムのショートカットを送信します。この Android デバイスで使うには %2$s に変更してください。</string>
+    <string name="flip_system_mismatch_switch">%1$s に変更</string>
+    <string name="flip_foreign_keys_message">%1$d 個のキーに %2$s の機能（%3$s）が残っており、%4$s では使えません。既定の機能に置き換えられます。</string>
+    <string name="flip_foreign_keys_clear">既定に戻す</string>
+
+    <!-- 首次使用教學 -->
+    <string name="flip_tutorial_help">チュートリアルを見る</string>
+    <string name="flip_tutorial_close">閉じる</string>
+    <string name="flip_tutorial_skip">スキップ</string>
+    <string name="flip_tutorial_previous">戻る</string>
+    <string name="flip_tutorial_next">次へ</string>
+    <string name="flip_tutorial_done">はじめる</string>
+    <string name="flip_tutorial_page1_title">キーボードを知る</string>
+    <string name="flip_tutorial_page1_description">F1〜F3：3 つのカスタムショートカット\nF4：Bluetooth ペアリング\nF10〜F12：デバイス 1〜3 の切り替え\n側面のスイッチをオンにして使用、その横は USB-C 充電ポート\nケーブルは背面に接続、有線のままでも使用可</string>
+    <string name="flip_tutorial_page2_title">デバイスのシステムに合わせる</string>
+    <string name="flip_tutorial_page2_description">各デバイスに正しいシステムを選ぶとショートカットが動作\nAndroid スマートフォン・タブレットは Android を選択（Samsung Galaxy は Samsung）\nアプリで選ぶと、キーボードに自動で適用\nキーボードでは Fn + E（iOS）/ Q（Android）/ W（Windows）/ S（Samsung）</string>
+    <string name="flip_tutorial_page3_title">Type-C 有線接続</string>
+    <string name="flip_tutorial_page3_description">USB-C を接続して電源を入れると、充電しながら使用可\nキーボードを充電中は、お使いのデバイスも同時に充電可\n有線モードはコピー、貼り付け、すべて選択に固定\n他のカスタムショートカットを使うには、Bluetooth で接続して設定・使用</string>
+    <string name="flip_tutorial_page4_title">ショートカットを設定</string>
+    <string name="flip_tutorial_page4_description">デバイスを開き、キーごとにアプリと機能を選択\n選ぶと自動でキーボードに書き込み\n「リセット」でコピー、貼り付け、すべて選択に戻る</string>
+    <string name="flip_tutorial_page5_title">スリープ時間を設定</string>
+    <string name="flip_tutorial_page5_description">スライダーで 1〜15 分の無操作後にスリープ\n任意のキーで復帰\n3 台のデバイスで共通</string>
+    <string name="flip_language_system">システムに従う</string>
+</resources>

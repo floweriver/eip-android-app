@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 向系統登記 App 支援的語言。Android 13 以上才會在
+     「設定 → 應用程式 → eiP Manager → 語言」（Samsung：一般管理 → 應用程式語言）列出本 App，
+     讓使用者不改系統語言也能單獨切換。 -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh-TW" />
+    <locale android:name="ja" />
+</locale-config>

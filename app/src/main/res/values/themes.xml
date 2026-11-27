@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.EiP" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- AppCompat 主題：App 內切換語言需要 AppCompatActivity。畫面全由 Compose 繪製，外觀不受影響。 -->
+    <style name="Theme.EiP" parent="Theme.AppCompat.Light.NoActionBar" />
 </resources>

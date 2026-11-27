@@ -1,6 +1,8 @@
-// v1.4.0 | 2026-09-01 | BLE 移出主執行緒（修 ANR）、排除非觸控筆、連線輪替大幅加速
+// v1.5.0 | 2026-10-01 | 支援 eiP Flip Keyboard（KL122）
 //
 // changelog:
+//   v1.5.0 | 2026-10-01 | 候選放行 eiP Flip Keyboard，連上後的服務探索與收發依裝置
+//                         類型分流到 FlipKeyboardController。筆的路徑未變更。
 //   v1.4.0 | 2026-09-01 | (1) 所有 BLE 迴圈改到 Dispatchers.IO——viewModelScope 預設
 //                         是主執行緒，而 startScan/connectGatt/disconnect/bondedDevices
 //                         都是同步 binder IPC，堆疊一忙就卡主執行緒導致 ANR。
@@ -141,6 +143,11 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         return n.contains("usi") || n.contains("pencil")
     }
 
+    // eiP Flip Keyboard 是唯一支援的鍵盤，協議與筆不同（見 FlipProtocol）。
+    // 其他 eiP 鍵盤仍照舊排除。
+    private fun isSupportedName(name: String?): Boolean =
+        isPencilName(name) || FlipProtocol.isFlipKeyboardName(name)
+
     private fun noteSkippedDevice(address: String, name: String?) {
         if (name != null && name.lowercase().contains("eip") && loggedNonPencils.add(address)) {
             addLog("Skipped non-pencil: $name", LogType.INFO)
@@ -158,6 +165,13 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     private var pendingSwitchTarget: BleDevice? = null
     // 使用者最後選定的裝置，auto-connect 會優先連它
     private var preferredDeviceId: String? = null
+
+    // --- eiP Flip Keyboard ---
+    // 目前連線對象是否為 Flip 鍵盤。鍵盤與筆的帧頭相同、Cmd 意義卻不同
+    // （0x01 在筆是設定按鍵，在鍵盤是裝置1 的設定），收發都必須依此分流。
+    @Volatile private var activeIsFlip = false
+    private var flipWriteChar: BluetoothGattCharacteristic? = null
+    val flip = FlipKeyboardController(viewModelScope, ::sendFlipFrame)
 
     init {
         startAutoConnectLoop()
@@ -177,7 +191,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     list.any { it.id == addr } ->
                         list.map { if (it.id == addr) it.copy(isNearby = true) else it }
                     // 掃到名稱且是 eip 筆：新增（涵蓋尚未配對的筆，ChromeOS 常見）
-                    name != null && isPencilName(name) -> {   // 明確判 null 讓 name 智慧轉型為非空
+                    name != null && isSupportedName(name) -> {   // 明確判 null 讓 name 智慧轉型為非空
                         addLog("Discovered $name ($addr)", LogType.INFO)
                         list + BleDevice(peripheral = device, name = name, rssi = result.rssi, isNearby = true)
                     }
@@ -306,6 +320,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (gatt !== bluetoothGatt) return
+            if (activeIsFlip) { onFlipServicesDiscovered(gatt, status); return }
 
             // --- 診斷日誌 (T-07)：確認服務探索到底拿到了什麼 ---
             // 目前 READY 是在「確認 ffe0 存在」之前就設定的，所以服務沒解析出來時
@@ -344,6 +359,16 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
+        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (gatt !== bluetoothGatt || !activeIsFlip) return
+            // 通知確認開啟後才查詢，否則回覆會落在訂閱生效之前而收不到。
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                flip.onReady()
+            } else {
+                addLog("X Keyboard CCCD write FAILED: status=$status - replies will never arrive", LogType.ERROR)
+            }
+        }
+
         // API 33+ 走這個
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
             if (gatt !== bluetoothGatt) return
@@ -370,6 +395,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         if (value.size >= 3 && value[0] == BleProtocol.DEVICE_HEADER_0 && value[1] == BleProtocol.DEVICE_HEADER_1) {
             val hex = value.joinToString(" ") { "%02X".format(it) }
             addLog("← RECV: $hex", LogType.RECEIVED)
+            if (activeIsFlip) { flip.onDataReceived(value); return }
             when (val cmd = value[2]) {
                 BleProtocol.Pencil.CMD_QUERY -> {
                     if (value.size == 7) {
@@ -409,6 +435,76 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         _shutdownTime.value = 5
         _signalLevel.value = 0
         hasReceivedInitialStatus = false
+        flipWriteChar = null
+        flip.onDisconnected()
+    }
+
+    /**
+     * Flip 鍵盤的服務探索。文件寫 FFE0，實機是 FF00，取實際存在且寫入、通知特徵
+     * 齊全的那組。找不到就直接斷開並記為失敗，不宣告 READY——否則畫面會顯示
+     * 已連線，但每個指令都送不出去。
+     */
+    private fun onFlipServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+        val address = gatt.device.address
+        val services = gatt.services ?: emptyList()
+        addLog("Services discovered (keyboard): status=$status count=${services.size}", LogType.INFO)
+
+        var write: BluetoothGattCharacteristic? = null
+        var notify: BluetoothGattCharacteristic? = null
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            for (uuid in FlipProtocol.SERVICE_UUIDS) {
+                val svc = gatt.getService(uuid) ?: continue
+                val w = FlipProtocol.WRITE_CHAR_UUIDS.firstNotNullOfOrNull { svc.getCharacteristic(it) }
+                val n = FlipProtocol.NOTIFY_CHAR_UUIDS.firstNotNullOfOrNull { svc.getCharacteristic(it) }
+                addLog("Keyboard service ${uuid.toString().substring(4, 8)} - write=${w != null} notify=${n != null}",
+                    if (w != null && n != null) LogType.INFO else LogType.ERROR)
+                if (w != null && n != null) { write = w; notify = n; break }
+            }
+        }
+
+        if (write == null || notify == null) {
+            addLog("X Keyboard service (ff00/ffe0) NOT USABLE", LogType.ERROR)
+            noteConnectFailure(address)
+            updateDeviceConnectionState(address, DeviceConnectionState.DISCONNECTED)
+            closeGatt()
+            resetState()
+            return
+        }
+
+        connectTimeoutJob?.cancel()
+        currentConnectionUsable = true
+        noteConnectSuccess(address)
+        flipWriteChar = write
+        updateDeviceConnectionState(address, DeviceConnectionState.READY)
+        // 查詢在 onDescriptorWrite 確認通知開啟後才送
+        toggleNotifications(notify.service.uuid.toString(), notify.uuid.toString(), true)
+    }
+
+    /** 送出一則 Flip 鍵盤封包；回傳是否成功交給藍牙堆疊。 */
+    private fun sendFlipFrame(packet: ByteArray): Boolean {
+        val hex = packet.joinToString(" ") { "%02X".format(it) }
+        val gatt = bluetoothGatt
+        val characteristic = flipWriteChar
+        if (gatt == null || characteristic == null) {
+            addLog("X SEND ABORT - keyboard not ready: $hex", LogType.ERROR)
+            return false
+        }
+        // 特徵支援有回應的寫入就用它，寫入失敗時堆疊才會回報
+        val writeType = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+        val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // BluetoothStatusCodes.SUCCESS == 0；用字面值避免在舊版裝置觸發類別解析
+            gatt.writeCharacteristic(characteristic, packet, writeType) == 0
+        } else {
+            @Suppress("DEPRECATION") characteristic.writeType = writeType
+            @Suppress("DEPRECATION") characteristic.value = packet
+            @Suppress("DEPRECATION") gatt.writeCharacteristic(characteristic)
+        }
+        addLog("-> SENT: $hex [${if (ok) "ok" else "rejected"}]", LogType.SENT)
+        return ok
     }
 
     private fun closeGatt() {
@@ -570,7 +666,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
             fun isPencil(d: BluetoothDevice): Boolean {
                 val n = try { d.name } catch (e: SecurityException) { null }
-                if (!isPencilName(n)) { noteSkippedDevice(d.address, n); return false }
+                if (!isSupportedName(n)) { noteSkippedDevice(d.address, n); return false }
                 return true
             }
 
@@ -617,6 +713,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         preferredDeviceId = device.id
         lastAttemptAt[device.id] = System.currentTimeMillis()
         currentConnectionUsable = false
+        activeIsFlip = device.isFlipKeyboard
         val bond = when (device.peripheral?.bondState) {
             BluetoothDevice.BOND_BONDED -> "bonded"
             BluetoothDevice.BOND_BONDING -> "bonding"
