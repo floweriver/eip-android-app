@@ -1,6 +1,8 @@
-// v1.0.0 | 2026-10-01 | 初版：eiP Flip Keyboard（KL122）通訊協議與功能碼表
+// v1.1.0 | 2026-11-27 | iPadOS 改稱 iOS；新增各系統預設鍵與「鍵碼屬於別的系統」判定
 //
 // changelog:
+//   v1.1.0 | 2026-11-27 | FlipSystem.IOS 顯示為「iOS」（同一組鍵 iPhone、iPad、Mac 都適用）。
+//                         新增 defaultKeyCodes（複製／貼上／全選）、FlipModeConfig.foreignKeyIndices。
 //   v1.0.0 | 2026-10-01 | 自 iOS 版 FlipKeyboardCatalog 移植。純 Kotlin、不依賴 Android
 //                         框架，可直接以 JVM 單元測試驗證（見 FlipProtocolTest）。
 package com.example.eip.ble
@@ -14,6 +16,8 @@ import java.util.UUID
 
 /** 鍵盤配置系統碼，對應 Cmd 0x01~0x03 的 Data1。 */
 enum class FlipSystem(val code: Int, val displayName: String) {
+    // 顯示為「iOS」而非「iPadOS」：同一組快捷鍵 iPhone、iPad、Mac 都適用，
+    // 寫 iPadOS 會讓客人以為 iPhone 與 MacBook 不能用。協議的系統碼不變。
     IOS(0x01, "iOS"),
     WINDOWS(0x02, "Windows"),
     ANDROID(0x03, "Android"),
@@ -49,6 +53,16 @@ data class FlipModeConfig(
 ) {
     /** 三顆鍵全為 0x00 代表停用該裝置。 */
     val isDisabled: Boolean get() = keyCodes.all { it == 0x00 }
+
+    /**
+     * 功能碼屬於別的系統的鍵（索引 0~2）。
+     *
+     * 鍵盤端以 Fn 組合鍵切換系統時不會清鍵碼，所以會出現「系統是 iOS、第三顆鍵
+     * 卻是 Android 的 Gemini」。鍵盤真的會送出該鍵碼，畫面照實顯示並另外提醒。
+     * 停用（0x00）與未定義的碼不算。
+     */
+    val foreignKeyIndices: List<Int>
+        get() = keyCodes.indices.filter { FlipFunctionCatalog.isForeign(keyCodes[it], system) }
 }
 
 /** 一顆自訂鍵可指派的功能。功能碼本身即代表所屬系統，韌體依單一總表查詢。 */
@@ -82,6 +96,26 @@ object FlipFunctionCatalog {
 
     /** 鍵盤回報欄位異常時使用的保留碼。 */
     const val ERROR_CODE = 0xFF
+
+    /**
+     * 各系統的預設三顆鍵：複製、貼上、全選。
+     *
+     * 重設、改掉不符的鍵、剛選好系統而沒有舊設定時都套用這一組，
+     * 讓鍵盤任何時候都有可用的功能，而不是三顆全空。接線模式亦固定為這一組。
+     */
+    fun defaultKeyCodes(system: FlipSystem): List<Int> = when (system) {
+        FlipSystem.IOS -> listOf(0x17, 0x18, 0x1A)
+        FlipSystem.WINDOWS -> listOf(0x6A, 0x6B, 0x6C)
+        FlipSystem.ANDROID -> listOf(0x89, 0x8A, 0x8B)
+        FlipSystem.SAMSUNG -> listOf(0xA6, 0xA7, 0xA8)
+    }
+
+    /** 某個功能碼是否屬於 [system] 以外的系統。停用與未定義的碼回傳 false。 */
+    fun isForeign(code: Int, system: FlipSystem): Boolean {
+        if (code == 0x00) return false
+        val function = function(code) ?: return false
+        return function.system != null && function.system != system
+    }
 
     val all: List<FlipFunction> = listOf(
         DISABLED,
@@ -241,15 +275,10 @@ object FlipFunctionCatalog {
         functions(system).filter { it.group == group }
 
     /**
-     * 接線模式下三顆鍵固定為複製 / 貼上 / 全選，此處回傳各系統對應的功能碼。
+     * 接線模式下三顆鍵固定為複製 / 貼上 / 全選，與 [defaultKeyCodes] 同一組。
      * 接線時韌體以固定行為運作，App 無法更改，僅用於顯示。
      */
-    fun wiredKeyCodes(system: FlipSystem): List<Int> = when (system) {
-        FlipSystem.IOS -> listOf(0x17, 0x18, 0x1A)
-        FlipSystem.WINDOWS -> listOf(0x6A, 0x6B, 0x6C)
-        FlipSystem.ANDROID -> listOf(0x89, 0x8A, 0x8B)
-        FlipSystem.SAMSUNG -> listOf(0xA6, 0xA7, 0xA8)
-    }
+    fun wiredKeyCodes(system: FlipSystem): List<Int> = defaultKeyCodes(system)
 }
 
 /** 指令組裝與回覆解析。 */
@@ -267,6 +296,9 @@ object FlipProtocol {
     /**
      * 是否為 eiP Flip Keyboard。其他 eiP 鍵盤（HyperKeys、SK-M1300 等）的功能碼
      * 編號不同，本 App 不支援，不可一併放行。
+     *
+     * 以關鍵字比對而非完整名稱：同一機型的廣播名稱有「eiP Flip Keyboard」與
+     * 現行韌體的「eiP Flipstand Keyboard」兩種，兩者都要放行（見單元測試）。
      */
     fun isFlipKeyboardName(name: String?): Boolean {
         val n = name?.lowercase() ?: return false

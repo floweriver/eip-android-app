@@ -116,10 +116,15 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
     val activeDevice = discoveredDevices.firstOrNull { it.connectionState == DeviceConnectionState.READY }
     val context = LocalContext.current
     var showTutorial by rememberSaveable { mutableStateOf(false) }
-    // 第一次成功連上筆(且沒看過教學)時，跳出彈窗教學
+    var showFlipTutorial by rememberSaveable { mutableStateOf(false) }
+    // 第一次成功連上(且沒看過教學)時，跳出彈窗教學；筆與 Flip 鍵盤各有一份、各看一次
     LaunchedEffect(activeDevice?.id) {
-        // 這份教學是筆的；鍵盤的教學尚未移植
-        if (activeDevice != null && !activeDevice.isFlipKeyboard && !hasSeenTutorial(context)) showTutorial = true
+        if (activeDevice == null) return@LaunchedEffect
+        if (activeDevice.isFlipKeyboard) {
+            if (!hasSeenFlipTutorial(context)) showFlipTutorial = true
+        } else if (!hasSeenTutorial(context)) {
+            showTutorial = true
+        }
     }
     var activePanel by remember { mutableStateOf(DetailPanel.NONE) }
     var targetKeyCode by remember { mutableStateOf(BleProtocol.Pencil.KeyCode.TOP_SINGLE) }
@@ -134,7 +139,7 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
         if (activeDevice == null) {
             DeviceScannerOverlay(discoveredDevices, viewModel)
         } else if (activeDevice.isFlipKeyboard) {
-            FlipKeyboardScreen(activeDevice, viewModel)
+            FlipKeyboardScreen(activeDevice, viewModel, onShowTutorial = { showFlipTutorial = true })
         } else {
             val isPanelOpen = activePanel != DetailPanel.NONE
             val panelWidth = if (isLandscape) 480.dp else 320.dp
@@ -204,6 +209,13 @@ fun DebugScreen(viewModel: BluetoothViewModel) {
             TutorialOverlay(tutorialPages) {
                 markTutorialSeen(context)
                 showTutorial = false
+            }
+        }
+        // Flip 鍵盤的教學：略過或看完都算看過，之後只能從頁首「?」重看
+        if (showFlipTutorial) {
+            FlipTutorialOverlay {
+                markFlipTutorialSeen(context)
+                showFlipTutorial = false
             }
         }
     }
@@ -536,7 +548,7 @@ fun DeviceScannerOverlay(devices: List<BleDevice>, viewModel: BluetoothViewModel
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = if (isEmpty) "Pair your eiP Pencil" else "Connect your eiP Pencil",
+            text = if (isEmpty) "Pair your eiP device" else "Connect your eiP device",
             fontSize = 22.sp,
             fontWeight = FontWeight.ExtraBold,
             color = Text_Black,
