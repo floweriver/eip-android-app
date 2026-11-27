@@ -104,4 +104,5 @@
     <string name="flip_tutorial_page4_description">Open a device, then pick an App and a Function per key\nChanges are written to the keyboard automatically\nReset restores Copy, Paste, Select All</string>
     <string name="flip_tutorial_page5_title">Set the Sleep Timer</string>
     <string name="flip_tutorial_page5_description">Drag the slider: sleep after 1–15 minutes idle\nPress any key to wake\nShared by all three devices</string>
+    <string name="flip_language_system">System default</string>
 </resources>

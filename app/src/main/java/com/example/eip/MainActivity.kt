@@ -5,7 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -18,7 +18,8 @@ import com.example.eip.ble.BluetoothViewModel
 import com.example.eip.ui.DebugScreen
 import com.eip.device.R
 
-class MainActivity : ComponentActivity() {
+// AppCompatActivity 而非 ComponentActivity：App 內切換語言（AppCompatDelegate.setApplicationLocales）需要它。
+class MainActivity : AppCompatActivity() {
 
     private val viewModel: BluetoothViewModel by viewModels()
 

@@ -73,4 +73,5 @@
     <string name="flip_tutorial_page4_description">デバイスを開き、キーごとにアプリと機能を選択\n選ぶと自動でキーボードに書き込み\n「リセット」でコピー、貼り付け、すべて選択に戻る</string>
     <string name="flip_tutorial_page5_title">スリープ時間を設定</string>
     <string name="flip_tutorial_page5_description">スライダーで 1〜15 分の無操作後にスリープ\n任意のキーで復帰\n3 台のデバイスで共通</string>
+    <string name="flip_language_system">システムに従う</string>
 </resources>

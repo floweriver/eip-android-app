@@ -73,4 +73,5 @@
     <string name="flip_tutorial_page4_description">展開裝置，每顆鍵先選平臺、再選功能\n選好會自動寫入鍵盤\n按「重設」回到複製、貼上、全選</string>
     <string name="flip_tutorial_page5_title">設定休眠時間</string>
     <string name="flip_tutorial_page5_description">拖曳滑桿，1–15 分鐘無操作自動休眠\n按任意鍵即喚醒\n三台裝置共用此設定</string>
+    <string name="flip_language_system">跟隨系統</string>
 </resources>

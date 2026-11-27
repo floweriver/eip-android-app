@@ -1,6 +1,7 @@
 // v1.2.0 | 2026-11-27 | 系統／鍵碼不符的橘色提醒、⚠︎ 標記、頁首「?」重看教學
 //
 // changelog:
+//   v1.2.1 | 2026-11-27 | 頁首加語言切換（跟隨系統／繁中／英／日），用 AppCompat 的 per-app locale。
 //   v1.2.0 | 2026-11-27 | 槽位系統不是 Android（Samsung 裝置亦接受 Samsung）時卡片頂端顯示橘色提醒
 //                         並可一鍵改為目標系統；系統正確但某顆鍵屬於別的系統時功能名加 ⚠︎、
 //                         提示幾顆鍵屬於哪個系統並可「改為預設」。頁首加「?」重看首次使用教學。
@@ -17,6 +18,8 @@ import android.os.Build
 import android.widget.Toast
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -296,6 +299,8 @@ fun FlipKeyboardScreen(device: BleDevice, viewModel: BluetoothViewModel, onShowT
             FlipCard(padding = PaddingValues(horizontal = 22.dp, vertical = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(modifier = Modifier.weight(1f)) { TopHeader(device, viewModel, title = device.name) }
+                    FlipLanguageButton()
+                    Spacer(Modifier.width(10.dp))
                     // 「?」隨時可重看首次使用教學。
                     FlipHelpButton(onClick = onShowTutorial)
                 }
@@ -341,6 +346,54 @@ fun FlipKeyboardScreen(device: BleDevice, viewModel: BluetoothViewModel, onShowT
                 }
             }
         )
+    }
+}
+
+// --- 語言切換 ---
+// 與 iOS 版一樣可在 App 內切換。Android 13 以上會寫進系統的「應用程式語言」設定（兩邊同步），
+// 12 以下由 AppCompat 自行保存。選了之後 Activity 會重建、整個畫面換語言。
+
+/** 可選語言：語言標籤 → 以該語言自身書寫的名稱（不隨目前語言翻譯，才找得到自己的語言）。 */
+private val FLIP_LANGUAGES = listOf("zh-TW" to "繁體中文", "en" to "English", "ja" to "日本語")
+
+/** 目前 App 的語言標籤；跟隨系統時為 null。 */
+private fun currentAppLanguage(): String? {
+    val tag = AppCompatDelegate.getApplicationLocales().toLanguageTags()
+    if (tag.isEmpty()) return null
+    return FLIP_LANGUAGES.firstOrNull { tag.startsWith(it.first.substringBefore('-')) }?.first ?: tag
+}
+
+/** 頁首的語言膠囊：顯示目前語言，點開選單切換。 */
+@Composable
+private fun FlipLanguageButton() {
+    var menuOpen by remember { mutableStateOf(false) }
+    val current = remember { currentAppLanguage() }
+    val label = FLIP_LANGUAGES.firstOrNull { it.first == current }?.second ?: stringResource(R.string.flip_language_system)
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(CircleShape)
+                .border(1.dp, Flip_Border, CircleShape)
+                .clickable { menuOpen = true }
+                .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Text_Black, maxLines = 1)
+            Icon(Icons.Default.KeyboardArrowDown, null, tint = Flip_Secondary, modifier = Modifier.size(16.dp))
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            FlipMenuItem(stringResource(R.string.flip_language_system), checked = current == null) {
+                menuOpen = false
+                AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
+            }
+            FLIP_LANGUAGES.forEach { (tag, name) ->
+                FlipMenuItem(name, checked = current == tag) {
+                    menuOpen = false
+                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
+                }
+            }
+        }
     }
 }
 
